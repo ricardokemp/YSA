@@ -1,41 +1,92 @@
+import streamlit as st
 import pandas as pd
 import numpy as np
-from sklearn.ensemble import Isolation Forest
+from sklearn.ensemble import IsolationForest
 import plotly.graph_objects as go
+import time
 
-# 1. Simulação de Dados de Sensores (Vibração e Temperatura)
-np.random.seed(42)
-normal_data = np.random.normal(loc=20, scale=2, size=(500, 2)) # Operação Normal
-anomalies = np.random.uniform(low=30, high=50, size=(20, 2))    # Picos de falha
+# Configuração da página para aproveitar o espaço lateral
+st.set_page_config(page_title="Yokogawa - IA de Ativos", layout="wide")
 
-# Criando o DataFrame
-df = pd.DataFrame(np.vstack([normal_data, anomalies]), columns=['Vibracao', 'Temperatura'])
+st.title("🛡️ Monitoramento de Ativos Industriais com IA")
+st.markdown("""
+Esta aplicação utiliza o algoritmo **Isolation Forest** para detectar desvios operacionais 
+em sensores de vibração e temperatura, auxiliando na manutenção preditiva.
+""")
 
-# 2. Configuração do Modelo Isolation Forest
-# contamination: proporção esperada de anomalias no conjunto de dados
-model = IsolationForest(contamination=0.05, random_state=42)
+# Barra lateral para ajustes técnicos
+st.sidebar.header("Configurações do Modelo")
+contamination = st.sidebar.slider("Sensibilidade (Contaminação)", 0.01, 0.20, 0.05)
+sensor_noise = st.sidebar.slider("Ruído do Sensor", 0.5, 5.0, 2.0)
 
-# Treinamento e Predição
-# -1 indica anomalia, 1 indica dado normal
-df['anomaly_score'] = model.fit_predict(df[['Vibracao', 'Temperatura']])
+# Função para simular a leitura de sensores (OT Data)
+def get_sensor_data():
+    # Gerando dados normais (Cluster central)
+    normal = np.random.normal(loc=[20, 45], scale=sensor_noise, size=(100, 2))
+    # Gerando anomalias propositais (Outliers)
+    anomalies = np.random.uniform(low=[35, 60], high=[50, 80], size=(5, 2))
+    
+    data = np.vstack([normal, anomalies])
+    df = pd.DataFrame(data, columns=['Vibracao', 'Temperatura'])
+    return df
 
-# 3. Visualização dos Resultados
-fig = go.Figure()
+# Container que será atualizado no loop
+placeholder = st.empty()
 
-# Dados Normais
-fig.add_trace(go.Scatter(
-    x=df[df['anomaly_score'] == 1]['Vibracao'],
-    y=df[df['anomaly_score'] == 1]['Temperatura'],
-    mode='markers', name='Operação Normal', marker=dict(color='blue')
-))
+# Simulação de monitoramento contínuo
+for _ in range(5): 
+    df_atual = get_sensor_data()
+    
+    # Instanciando e treinando o modelo corrigido
+    model = IsolationForest(contamination=contamination, random_state=42)
+    df_atual['status_code'] = model.fit_predict(df_atual[['Vibracao', 'Temperatura']])
+    
+    # Mapeando os resultados para linguagem humanizada
+    df_atual['Status'] = df_atual['status_code'].map({1: 'Operação Normal', -1: 'Anomalia'})
 
-# Anomalias Detectadas
-fig.add_trace(go.Scatter(
-    x=df[df['anomaly_score'] == -1]['Vibracao'],
-    y=df[df['anomaly_score'] == -1]['Temperatura'],
-    mode='markers', name='Anomalia Detectada', marker=dict(color='red', symbol='x')
-))
+    with placeholder.container():
+        col1, col2 = st.columns([2, 1])
 
-fig.update_layout(title='Detecção de Anomalias em Ativos Industriais',
-                  xaxis_title='Nível de Vibração', yaxis_title='Temperatura (°C)')
-fig.show()
+        with col1:
+            # Gráfico de Dispersão com Plotly
+            fig = go.Figure()
+            
+            # Plot dos dados normais
+            normais = df_atual[df_atual['status_code'] == 1]
+            fig.add_trace(go.Scatter(
+                x=normais['Vibracao'], y=normais['Temperatura'],
+                mode='markers', name='Normal', 
+                marker=dict(color='#005596', size=8, opacity=0.7)
+            ))
+
+            # Plot das anomalias detectadas
+            anomalias = df_atual[df_atual['status_code'] == -1]
+            fig.add_trace(go.Scatter(
+                x=anomalias['Vibracao'], y=anomalias['Temperatura'],
+                mode='markers', name='Anomalia', 
+                marker=dict(color='#FF0000', size=12, symbol='x')
+            ))
+
+            fig.update_layout(
+                title="Espaço de Estados do Ativo",
+                xaxis_title="Vibração (mm/s)",
+                yaxis_title="Temperatura (°C)",
+                template="plotly_white",
+                legend_title="Diagnóstico"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col2:
+            # Painel de métricas
+            total_anomalies = len(anomalias)
+            st.metric("Alertas de Anomalia", total_anomalies)
+            
+            if total_anomalies > 0:
+                st.error(f"Sistema detectou {total_anomalies} desvios críticos.")
+            else:
+                st.success("Estabilidade operacional confirmada.")
+
+            st.write("Dados Recentes (Sensores):")
+            st.dataframe(df_atual.tail(8), use_container_width=True)
+
+    time.sleep(1) # Intervalo entre "leituras"
