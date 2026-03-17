@@ -3,89 +3,92 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import time
+from sklearn.ensemble import IsolationForest
 
-# Bloco de segurança para garantir a importação do Scikit-Learn
-try:
-    from sklearn.ensemble import IsolationForest
-except ModuleNotFoundError:
-    st.error("A biblioteca 'scikit-learn' não foi encontrada. Certifique-se de que o arquivo requirements.txt existe ou execute 'pip install scikit-learn' no terminal.")
-    st.stop()
+# Configurações de interface
+st.set_page_config(page_title="Yokogawa IA - Ativos", layout="wide")
 
-# Configuração da página para o padrão de dashboard industrial
-st.set_page_config(page_title="Yokogawa - Monitoramento IA", layout="wide")
+st.title("🛡️ Diagnóstico de Ativos Industriais")
+st.write("Monitoramento baseado em normas técnicas para vibração (mm/s) e temperatura (°C).")
 
-st.title("🛡️ Monitoramento de Ativos com IA")
-st.markdown("Interface para detecção de anomalias em tempo real, focada em ativos da América do Sul.")
+# Parâmetros Técnicos na barra lateral
+st.sidebar.header("⚙️ Configuração do Modelo")
+sensibilidade = st.sidebar.slider("Sensibilidade da IA (Contaminação)", 0.01, 0.15, 0.05)
 
-# Barra lateral para ajustes do engenheiro
-st.sidebar.header("Parâmetros Técnicos")
-contaminacao = st.sidebar.slider("Sensibilidade da IA", 0.01, 0.20, 0.05)
-ruido = st.sidebar.slider("Nível de Ruído dos Sensores", 1.0, 10.0, 2.5)
+st.sidebar.subheader("📍 Limites de Referência")
+st.sidebar.info("""
+**ISO 10816 (Vibração):**
+* Normal: < 2.8 mm/s
+* Alerta: > 4.5 mm/s
+* Crítico: > 7.1 mm/s
+""")
 
-# Função para simular telemetria (Vibração e Temperatura)
-def capturar_dados_sensores():
-    # Gerando dados de operação estável
-    estavel = np.random.normal(loc=[22, 48], scale=ruido, size=(100, 2))
-    # Gerando picos aleatórios que representam falhas
-    falhas = np.random.uniform(low=[40, 70], high=[60, 90], size=(5, 2))
+# Função para gerar dados simulando um motor real
+def gerar_dados_reais():
+    # Operação estável: 1.5 a 2.5 mm/s e 40 a 50°C
+    base_normal = np.random.normal(loc=[2.0, 45.0], scale=[0.4, 2.0], size=(100, 2))
     
-    dados = np.vstack([estavel, falhas])
-    return pd.DataFrame(dados, columns=['Vibracao', 'Temperatura'])
-
-# Espaço reservado para atualização do dashboard
-container_principal = st.empty()
-
-# Loop de monitoramento (simulando 10 ciclos de leitura)
-for ciclo in range(10):
-    df_atual = capturar_dados_sensores()
+    # Simulação de anomalia: Aumento de vibração por desalinhamento ou aquecimento
+    base_falha = np.random.uniform(low=[5.0, 65.0], high=[9.0, 85.0], size=(5, 2))
     
-    # Aplicação do algoritmo de IA (Isolation Forest corrigido)
-    modelo = IsolationForest(contamination=contaminacao, random_state=42)
-    df_atual['resultado'] = modelo.fit_predict(df_atual[['Vibracao', 'Temperatura']])
+    uniao = np.vstack([base_normal, base_falha])
+    return pd.DataFrame(uniao, columns=['Vibração (mm/s)', 'Temperatura (°C)'])
+
+# Espaço de exibição dinâmico
+painel = st.empty()
+
+# Loop de monitoramento
+for i in range(20):
+    df = gerar_dados_reais()
     
-    # Tradução dos resultados para o operador
-    df_atual['Diagnóstico'] = df_atual['resultado'].map({1: 'Normal', -1: 'Anomalia'})
+    # IA: Treinamento e Predição
+    ia_modelo = IsolationForest(contamination=sensibilidade, random_state=42)
+    df['previsao'] = ia_modelo.fit_predict(df[['Vibração (mm/s)', 'Temperatura (°C)']])
+    
+    with painel.container():
+        m1, m2, m3 = st.columns(3)
+        
+        # Última leitura capturada
+        ultima_vibracao = df['Vibração (mm/s)'].iloc[-1]
+        ultima_temp = df['Temperatura (°C)'].iloc[-1]
+        anomalias_total = len(df[df['previsao'] == -1])
 
-    with container_principal.container():
-        col_grafico, col_metricas = st.columns([2, 1])
+        m1.metric("Vibração Atual", f"{ultima_vibracao:.2f} mm/s")
+        m2.metric("Temperatura Atual", f"{ultima_temp:.1f} °C")
+        m3.metric("Pontos Fora de Padrão", anomalias_total)
 
-        with col_grafico:
+        st.divider()
+
+        col_esq, col_dir = st.columns([2, 1])
+
+        with col_esq:
             fig = go.Figure()
             
-            # Plotando pontos normais (Azul Yokogawa)
-            df_normal = df_atual[df_atual['resultado'] == 1]
-            fig.add_trace(go.Scatter(
-                x=df_normal['Vibracao'], y=df_normal['Temperatura'],
-                mode='markers', name='Operação Normal',
-                marker=dict(color='#005596', size=7, opacity=0.6)
-            ))
+            # Dados estáveis
+            df_n = df[df['previsao'] == 1]
+            fig.add_trace(go.Scatter(x=df_n['Vibração (mm/s)'], y=df_n['Temperatura (°C)'], 
+                                     mode='markers', name='Estável',
+                                     marker=dict(color='#005596', opacity=0.6, size=8)))
+            
+            # Anomalias (Alertas)
+            df_a = df[df['previsao'] == -1]
+            fig.add_trace(go.Scatter(x=df_a['Vibração (mm/s)'], y=df_a['Temperatura (°C)'], 
+                                     mode='markers', name='ANOMALIA',
+                                     marker=dict(color='#D32F2F', size=12, symbol='diamond')))
 
-            # Plotando anomalias (Vermelho de Alerta)
-            df_falha = df_atual[df_atual['resultado'] == -1]
-            fig.add_trace(go.Scatter(
-                x=df_falha['Vibracao'], y=df_falha['Temperatura'],
-                mode='markers', name='ALERTA CRÍTICO',
-                marker=dict(color='#D32F2F', size=12, symbol='diamond')
-            ))
-
-            fig.update_layout(
-                title=f"Mapa de Estados do Ativo - Ciclo {ciclo + 1}",
-                xaxis_title="Vibração (mm/s)",
-                yaxis_title="Temperatura (°C)",
-                template="plotly_white"
-            )
+            fig.update_layout(title="Correlação Vibração x Temperatura", 
+                              xaxis_title="Vibração (mm/s)", yaxis_title="Temperatura (°C)",
+                              template="plotly_white", height=450)
             st.plotly_chart(fig, use_container_width=True)
 
-        with col_metricas:
-            qtd_anomalias = len(df_falha)
-            st.metric("Desvios Detectados", qtd_anomalias, delta_color="inverse")
-            
-            if qtd_anomalias > 0:
-                st.warning(f"O sistema identificou {qtd_anomalias} pontos fora do padrão.")
+        with col_dir:
+            if anomalias_total > 0:
+                st.error(f"🚨 Atenção: Detectados {anomalias_total} desvios de performance.")
+                st.write("Verificar possível desalinhamento ou lubrificação.")
             else:
-                st.success("Equipamento operando dentro da normalidade.")
+                st.success("✅ Ativo operando em conformidade técnica.")
 
-            st.write("Tabela de Dados Recentes:")
-            st.dataframe(df_atual.tail(5), use_container_width=True)
+            st.write("Histórico de Sinais:")
+            st.dataframe(df.tail(8), use_container_width=True)
 
-    time.sleep(1.5)
+    time.sleep(2)
